@@ -62,9 +62,9 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
     // 调用核函数
     doTrace<T><<<grid_dim, block_dim, s_mem_size>>>(d_input, d_output, rows, cols, size);
 
-    CUDA_CHECK(cudaMemcpy(&h_result, d_output, sizeof(T), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaFree(d_input));
-    CUDA_CHECK(cudaFree(d_output));
+    RUNTIME_CHECK(cudaMemcpy(&h_result, d_output, sizeof(T), cudaMemcpyDeviceToHost));
+    RUNTIME_CHECK(cudaFree(d_input));
+    RUNTIME_CHECK(cudaFree(d_output));
 
     return h_result;
 }
