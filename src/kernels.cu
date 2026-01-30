@@ -10,7 +10,7 @@ __global__ void doTrace(T* input, T* output, size_t rows, size_t cols, size_t si
     size_t tid = threadIdx.x;
     size_t global_tid = blockIdx.x * blockDim.x + threadIdx.x;
     if(global_tid < size) {
-        s_mem[tid] = input[cols * global_tid + global_tid];
+        s_mem[tid] = input[global_tid];
     } else {
         s_mem[tid] = 0;
     }
@@ -51,7 +51,13 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
     } else {
         size = cols;
     }
-    size_t bytes = sizeof(T) * h_input.size();
+    size_t bytes = sizeof(T) * size;
+
+    std::vector<T> h_diag(size);
+    for (size_t i = 0; i < size; ++i) {
+        h_diag[i] = h_input[i * cols + i];
+    }
+
     dim3 block_dim(256);
     dim3 grid_dim((size + block_dim.x - 1) / block_dim.x);
     size_t s_mem_size = block_dim.x * sizeof(T);
@@ -62,7 +68,7 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
 
     RUNTIME_CHECK(cudaMalloc(&d_input, bytes));
     RUNTIME_CHECK(cudaMalloc(&d_output, sizeof(T)));
-    RUNTIME_CHECK(cudaMemcpy(d_input, h_input.data(), bytes, cudaMemcpyHostToDevice));
+    RUNTIME_CHECK(cudaMemcpy(d_input, h_diag.data(), bytes, cudaMemcpyHostToDevice));
     RUNTIME_CHECK(cudaMemset(d_output, 0, sizeof(T)));
 
     // 调用核函数
