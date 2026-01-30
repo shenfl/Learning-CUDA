@@ -3,6 +3,25 @@
 
 #include "../tester/utils.h"
 
+__global__ doTrace(T* input, T* output, size_t rows, size_t cols, size_t size) {
+    extern __shared__ T s_mem[];
+    size_t tid = threadIdx.x;
+    size_t idx;
+    s_mem[tid] = input[cols * tid + tid];
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            s_mem[tid] += s_mem[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        atomicAdd(output, s_mem[0]);
+    }
+}
+
 /**
  * @brief Computes the trace of a matrix.
  *
@@ -48,25 +67,6 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
     CUDA_CHECK(cudaFree(d_output));
 
     return h_result;
-}
-
-__global__ doTrace(T* input, T* output, size_t rows, size_t cols, size_t size) {
-    extern __shared__ T s_mem[];
-    size_t tid = threadIdx.x;
-    size_t idx;
-    s_mem[tid] = input[cols * tid + tid];
-    __syncthreads();
-
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (tid < s) {
-            s_mem[tid] += s_mem[tid + s];
-        }
-        __syncthreads();
-    }
-
-    if (tid == 0) {
-        atomicAdd(output, s_mem[0]);
-    }
 }
 
 /**
