@@ -3,6 +3,7 @@
 
 #include "../tester/utils.h"
 
+template <typename T>
 __global__ doTrace(T* input, T* output, size_t rows, size_t cols, size_t size) {
     extern __shared__ T s_mem[];
     size_t tid = threadIdx.x;
