@@ -5,14 +5,11 @@
 
 template <typename T>
 __global__ void doTrace(T* input, T* output, size_t rows, size_t cols, size_t size) {
-    extern __shared__ T s_mem[];
+    extern __shared__ unsigned char smem_raw[];
+    T* s_mem = reinterpret_cast<T*>(smem_raw);
     size_t tid = threadIdx.x;
     size_t idx;
-    if (tid < size) {
-        s_mem[tid] = input[cols * tid + tid];
-    } else {
-        s_mem[tid] = 0;
-    }
+    s_mem[tid] = input[cols * tid + tid];
     __syncthreads();
 
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -50,7 +47,7 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
     } else {
         size = cols;
     }
-    size_t bytes = sizeof(T) * size;
+    size_t bytes = sizeof(T) * h_input.size();
     dim3 block_dim(256);
     dim3 grid_dim((size + block_dim.x - 1) / block_dim.x);
     size_t s_mem_size = block_dim.x * sizeof(T);
