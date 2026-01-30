@@ -35,8 +35,8 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
     T* d_input = nullptr;
     T h_result = 0;
 
-    RUNTIME_CHECK(cudaMalloc(&d_input), bytes);
-    RUNTIME_CHECK(cudaMalloc(&d_output), sizeof(T));
+    RUNTIME_CHECK(cudaMalloc(&d_input, bytes));
+    RUNTIME_CHECK(cudaMalloc(&d_output, sizeof(T)));
     RUNTIME_CHECK(cudaMemcpy(d_input, h_input.data(), bytes, cudaMemcpyHostToDevice));
     RUNTIME_CHECK(cudaMemset(d_output, 0, sizeof(T)));
 
