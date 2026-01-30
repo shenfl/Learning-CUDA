@@ -19,8 +19,54 @@
  */
 template <typename T>
 T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
-  // TODO: Implement the trace function
-  return T(-1);
+    // TODO: Implement the trace function
+    size_t size = 0;
+    if(rows < cols) {
+        size = rows;
+    } else {
+        size = cols;
+    }
+    size_t bytes = sizeof(T) * size;
+    dim3 block_dim(256);
+    dim3 grid_dim((size + block_dim.x - 1) / block_dim.x);
+    size_t s_mem_size = block_dim.x * sizeof(T);
+
+    T* d_output = nullptr;
+    T* d_input = nullptr;
+    T h_result = 0;
+
+    RUNTIME_CHECK(cudaMalloc(&d_input), bytes);
+    RUNTIME_CHECK(cudaMalloc(&d_output), sizeof(T));
+    RUNTIME_CHECK(cudaMemcpy(d_input, h_input.data(), bytes, cudaMemcpyHostToDevice));
+    RUNTIME_CHECK(cudaMemset(d_output, 0, sizeof(T)));
+
+    // 调用核函数
+    doTrace<T><<<grid_dim, block_dim, s_mem_size>>>(d_input, d_output, rows, cols, size);
+
+    CUDA_CHECK(cudaMemcpy(&h_result, d_output, sizeof(T), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
+
+    return h_result;
+}
+
+__global__ doTrace(T* input, T* output, size_t rows, size_t cols, size_t size) {
+    extern __shared__ T s_mem[];
+    size_t tid = threadIdx.x;
+    size_t idx;
+    s_mem[tid] = input[cols * tid + tid];
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            s_mem[tid] += s_mem[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        atomicAdd(output, s_mem[0]);
+    }
 }
 
 /**
