@@ -8,8 +8,8 @@ __global__ void doTrace(T* input, T* output, size_t rows, size_t cols, size_t si
     extern __shared__ unsigned char smem_raw[];
     T* s_mem = reinterpret_cast<T*>(smem_raw);
     size_t tid = threadIdx.x;
-    size_t idx;
-    s_mem[tid] = input[cols * tid + tid];
+    size_t global_tid = blockIdx.x * blockDim.x + threadIdx.x;
+    s_mem[tid] = input[cols * global_tid + global_tid];
     __syncthreads();
 
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
