@@ -8,7 +8,11 @@ __global__ void doTrace(T* input, T* output, size_t rows, size_t cols, size_t si
     extern __shared__ T s_mem[];
     size_t tid = threadIdx.x;
     size_t idx;
-    s_mem[tid] = input[cols * tid + tid];
+    if (tid < size) {
+        s_mem[tid] = input[cols * tid + tid];
+    } else {
+        s_mem[tid] = 0;
+    }
     __syncthreads();
 
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
