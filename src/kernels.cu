@@ -131,7 +131,7 @@ __global__ void flash_attn_kernel(
     float o = 0.0f; // 未归一化输出
 
     for (int s = 0; s < src_seq_len; ++s) {
-        if (causal && s > t) break; // 因果注意力
+        if (is_causal && s > t) break; // 因果注意力
 
         const T* k_ptr = K + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
         const T* v_ptr = V + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
