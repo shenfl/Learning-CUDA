@@ -97,12 +97,107 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
  * @param[in] head_dim Dimension size of each attention head
  * @param[in] is_causal Whether to apply causal masking
  */
+
+template <typename T>
+__global__ void flash_attn_kernel(
+        const T* __restrict__ Q,
+        const T* __restrict__ K,
+        const T* __restrict__ V,
+        T* __restrict__ O,
+        int batch_size,
+        int target_seq_len,
+        int src_seq_len,
+        int query_heads,
+        int kv_heads,
+        int head_dim,
+        bool is_causal
+) {
+    int idx = blockIdx.x;
+    int tid = threadIdx.x;
+    int total = batch_size * target_seq_len * query_heads;
+    if (idx >= total || tid >= head_dim) return;
+
+    int qh = idx % query_heads;
+    int t  = (idx / query_heads) % target_seq_len;
+    int b  = idx / (query_heads * target_seq_len);
+
+    int kv_h = qh * kv_heads / query_heads;
+
+    const T* q_ptr = Q + (((b * target_seq_len + t) * query_heads + qh) * head_dim);
+    T q = q_ptr[tid];
+
+    float m = -1e20f; // 老的最大值
+    float l = 0.0f; // 归一化分母
+    float o = 0.0f; // 未归一化输出
+
+    for (int s = 0; s < src_seq_len; ++s) {
+        if (causal && s > t) break; // 因果注意力
+
+        const T* k_ptr = K + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
+        const T* v_ptr = V + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
+
+        __shared__ float score; // head_dim计算处理的attention分数
+        if (tid == 0) score = 0.0f;
+        __syncthreads(); // 每个线程先取值
+
+        atomicAdd(&score, (float)(q * k_ptr[tid]));
+        __syncthreads(); // 当前这个src分数计算完了
+
+        float s_val = score / sqrtf((float)head_dim);
+
+        float m_new = fmaxf(m, s_val); // 新的最大值，每个tid上都是一样的
+        float alpha = expf(m - m_new); // 老的对新的折算比率
+        float beta  = expf(s_val - m_new);
+
+        o = o * alpha + beta * (float)v_ptr[tid]; // 一个个v值计算的，而不是整个向量
+        l = l * alpha + beta;
+        m = m_new;
+
+        __syncthreads(); // 当前这个online计算完成
+    }
+
+    O[(((b * target_seq_len + t) * query_heads + qh) * head_dim) + tid] = (T)(o / l);
+}
+
 template <typename T>
 void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
                     const std::vector<T>& h_v, std::vector<T>& h_o,
                     int batch_size, int target_seq_len, int src_seq_len, 
                     int query_heads, int kv_heads, int head_dim, bool is_causal) {       
-  // TODO: Implement the flash attention function
+    // TODO: Implement the flash attention function
+    const T scale = static_cast<T>(1.0 / std::sqrt(head_dim));
+    size_t q_size = h_q.size() * sizeof(T);
+    size_t k_size = h_k.size() * sizeof(T);
+    size_t v_size = h_v.size() * sizeof(T);
+    size_t o_size = h_o.size() * sizeof(T);
+
+    T *d_q, *d_k, *d_v, *d_o;
+    RUNTIME_CHECK(cudaMalloc(&d_q, q_size));
+    RUNTIME_CHECK(cudaMalloc(&d_k, k_size));
+    RUNTIME_CHECK(cudaMalloc(&d_v, v_size));
+    RUNTIME_CHECK(cudaMalloc(&d_o, o_size));
+
+    RUNTIME_CHECK(cudaMemcpy(d_q, h_q.data(), q_size, cudaMemcpyHostToDevice));
+    RUNTIME_CHECK(cudaMemcpy(d_k, h_k.data(), k_size, cudaMemcpyHostToDevice));
+    RUNTIME_CHECK(cudaMemcpy(d_v, h_v.data(), v_size, cudaMemcpyHostToDevice));
+
+    int blocks = batch_size * target_seq_len * query_heads;
+    int threads = head_dim;
+
+    flash_attn_kernel<<<blocks, threads>>>(
+            d_q, d_k, d_v, d_o,
+            batch_size, target_seq_len, src_seq_len,
+            query_heads, kv_heads, head_dim,
+            is_causal
+    );
+
+    RUNTIME_CHECK(cudaMemcpy(h_o.data(), d_o, o_size, cudaMemcpyDeviceToHost));
+
+    RUNTIME_CHECK(cudaFree(d_q));
+    RUNTIME_CHECK(cudaFree(d_k));
+    RUNTIME_CHECK(cudaFree(d_v));
+    RUNTIME_CHECK(cudaFree(d_o));
+
 }
 
 // *********************************************************************
