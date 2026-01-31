@@ -81,6 +81,25 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
     return h_result;
 }
 
+template <typename T>
+__device__ __forceinline__ float to_float(T x) {
+    return (float)x;
+}
+
+template <>
+__device__ __forceinline__ float to_float<half>(half x) {
+    return __half2float(x);
+}
+
+template <typename T>
+__device__ __forceinline__ T from_float(float x) {
+    return (T)x;
+}
+
+template <>
+__device__ __forceinline__ half from_float<half>(float x) {
+    return __float2half_rn(x);
+}
 
 template <typename T>
 __device__ T mul(const T &a, const T &b) {
@@ -148,7 +167,7 @@ __global__ void flash_attn_kernel(
         if (tid == 0) score = 0.0f;
         __syncthreads(); // 每个线程先取值
 
-        atomicAdd(&score, (float)mul(q, k_ptr[tid]));
+        atomicAdd(&score, to_float(mul(q, k_ptr[tid])));
         __syncthreads(); // 当前这个src分数计算完了
 
         float s_val = score / sqrtf((float)head_dim);
@@ -157,14 +176,14 @@ __global__ void flash_attn_kernel(
         float alpha = expf(m - m_new); // 老的对新的折算比率
         float beta  = expf(s_val - m_new);
 
-        o = o * alpha + mul(beta, v_ptr[tid]); // 一个个v值计算的，而不是整个向量
+        o = o * alpha + beta * to_float(v_ptr[tid]); // 一个个v值计算的，而不是整个向量
         l = l * alpha + beta;
         m = m_new;
 
         __syncthreads(); // 当前这个online计算完成
     }
 
-    O[(((b * target_seq_len + t) * query_heads + qh) * head_dim) + tid] = (T)(o / l);
+    O[(((b * target_seq_len + t) * query_heads + qh) * head_dim) + tid] = from_float<T>(o / l);
 }
 
 template <typename T>
