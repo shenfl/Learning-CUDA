@@ -81,6 +81,15 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
     return h_result;
 }
 
+
+template <typename T>
+__device__ T mul(const T &a, const T &b) {
+    if constexpr (std::is_same_v<T, float>) {
+        return a * b;
+    } else if constexpr (std::is_same_v<T, __half>) {
+        return __hmul(a, b);
+    }
+}
 /**
  * @brief Computes flash attention for given query, key, and value tensors.
  * 
@@ -97,7 +106,6 @@ T trace(const std::vector<T>& h_input, size_t rows, size_t cols) {
  * @param[in] head_dim Dimension size of each attention head
  * @param[in] is_causal Whether to apply causal masking
  */
-
 template <typename T>
 __global__ void flash_attn_kernel(
         const T* __restrict__ Q,
@@ -140,7 +148,7 @@ __global__ void flash_attn_kernel(
         if (tid == 0) score = 0.0f;
         __syncthreads(); // 每个线程先取值
 
-        atomicAdd(&score, (float)(q * k_ptr[tid]));
+        atomicAdd(&score, (float)mul(q, k_ptr[tid]));
         __syncthreads(); // 当前这个src分数计算完了
 
         float s_val = score / sqrtf((float)head_dim);
@@ -149,7 +157,7 @@ __global__ void flash_attn_kernel(
         float alpha = expf(m - m_new); // 老的对新的折算比率
         float beta  = expf(s_val - m_new);
 
-        o = o * alpha + beta * (float)v_ptr[tid]; // 一个个v值计算的，而不是整个向量
+        o = o * alpha + mul(beta, v_ptr[tid]); // 一个个v值计算的，而不是整个向量
         l = l * alpha + beta;
         m = m_new;
 
