@@ -174,7 +174,7 @@ __global__ void flash_attn_kernel(
         }
 
         if (tid == 0) {
-            score = smem[0]
+            score = smem[0];
         }
         __syncthreads();
 
