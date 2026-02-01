@@ -136,7 +136,7 @@ __global__ void flash_attn_kernel(
     int total = batch_size * target_seq_len * query_heads;
     if (idx >= total || tid >= head_dim) return;
 
-    extern __shared__ T smem[];
+    extern __shared__ float smem[];
 
     int qh = idx % query_heads;
     int t  = (idx / query_heads) % target_seq_len;
@@ -218,7 +218,7 @@ void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
 
     int blocks = batch_size * target_seq_len * query_heads;
     int threads = head_dim;
-    size_t smen_size = threads * sizeof(T);
+    size_t smen_size = threads * sizeof(float );
 
     flash_attn_kernel<<<blocks, threads, smen_size>>>(
             d_q, d_k, d_v, d_o,
