@@ -126,97 +126,6 @@ __inline__ __device__ T warpReduceSum(T val) {
  * @param[in] is_causal Whether to apply causal masking
  */
 template <typename T>
-//__global__ void flash_attn_kernel(
-//        const T* __restrict__ Q,
-//        const T* __restrict__ K,
-//        const T* __restrict__ V,
-//        T* __restrict__ O,
-//        int batch_size,
-//        int target_seq_len,
-//        int src_seq_len,
-//        int query_heads,
-//        int kv_heads,
-//        int head_dim,
-//        bool is_causal
-//) {
-//    int idx = blockIdx.x;
-//    int tid = threadIdx.x;
-//    int total = batch_size * target_seq_len * query_heads;
-//    if (idx >= total) return;
-//
-//    extern __shared__ float smem[];
-//
-//    int qh = idx % query_heads;
-//    int t  = (idx / query_heads) % target_seq_len;
-//    int b  = idx / (query_heads * target_seq_len);
-//
-//    int kv_h = qh * kv_heads / query_heads;
-//
-//    float q = 0.0f;
-//    if (tid < head_dim) {
-//        const T* q_ptr = Q + (((b * target_seq_len + t) * query_heads + qh) * head_dim);
-//        q = to_float(q_ptr[tid]);
-//    }
-//
-//    float m = -INFINITY; // 老的最大值
-//    float l = 0.0f; // 归一化分母
-//    float o = 0.0f; // 未归一化输出
-//    const float scale = rsqrtf((float)head_dim);
-//
-//    for (int s = 0; s < src_seq_len; ++s) {
-//        if (is_causal && s > t) break; // 因果注意力
-//
-//        const T* k_ptr = K + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
-//        const T* v_ptr = V + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
-//
-//        __shared__ float score; // head_dim计算处理的attention分数
-//        if (tid == 0) score = 0.0f;
-//        __syncthreads(); // 每个线程先取值
-//
-//        float k = 0.0f;
-//        if (tid < head_dim) {
-//            k = to_float(k_ptr[tid]);
-//        }
-//        if (tid < head_dim) {
-//            smem[tid] = q * k;
-//        } else {
-//            smem[tid] = 0;
-//        }
-//
-//        __syncthreads();
-//        for (int i = blockDim.x / 2; i > 0; i >>= 1) {
-//            if (tid < i) {
-//                smem[tid] += smem[tid + i];
-//            }
-//            __syncthreads();
-//        }
-//
-//        if (tid == 0) {
-//            score = smem[0];
-//        }
-//        __syncthreads();
-//
-//        float s_val = score * scale;
-//
-//        float m_new = fmaxf(m, s_val); // 新的最大值，每个tid上都是一样的
-//        float alpha = expf(m - m_new); // 老的对新的折算比率
-//        float beta  = expf(s_val - m_new);
-//
-//        float v = 0.0f;
-//        if (tid < head_dim) {
-//            v = to_float(v_ptr[tid]);
-//        }
-//        o = o * alpha + beta * v; // 一个个v值计算的，而不是整个向量
-//        l = l * alpha + beta;
-//        m = m_new;
-//
-//        __syncthreads(); // 当前这个online计算完成
-//    }
-//
-//    if(tid < head_dim) {
-//        O[(((b * target_seq_len + t) * query_heads + qh) * head_dim) + tid] = from_float<T>(o / l);
-//    }
-//}
 __global__ void flash_attn_kernel(
         const T* __restrict__ Q,
         const T* __restrict__ K,
@@ -260,33 +169,32 @@ __global__ void flash_attn_kernel(
         const T* k_ptr = K + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
         const T* v_ptr = V + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
 
+        __shared__ float score; // head_dim计算处理的attention分数
+        if (tid == 0) score = 0.0f;
+        __syncthreads(); // 每个线程先取值
+
         float k = 0.0f;
         if (tid < head_dim) {
             k = to_float(k_ptr[tid]);
         }
-        float val = q * k;
-        // Warp 内归约: 得到每个 warp 的和
-        val = warpReduceSum(val);
+        if (tid < head_dim) {
+            smem[tid] = q * k;
+        } else {
+            smem[tid] = 0;
+        }
 
-        int lane = tid % 32;
-        int warp_id = tid / 32;
+        __syncthreads();
+        for (int i = blockDim.x / 2; i > 0; i >>= 1) {
+            if (tid < i) {
+                smem[tid] += smem[tid + i];
+            }
+            __syncthreads();
+        }
 
-        if (lane == 0) smem[warp_id] = val;
-        __syncthreads(); // 等待所有 warp 写完
-
-        // 让第一个 warp (warp 0) 将所有 warp 的结果加起来
-        float score = 0.0f;
-        if (warp_id == 0) {
-            // 假设 blockDim 不超过 1024 (即 warp 数量 <= 32)
-            // 只有 warp 0 的前 (blockDim/32) 个线程需要读取 smem
-            val = (tid < (blockDim.x / 32)) ? smem[lane] : 0.0f;
-            val = warpReduceSum(val); // 再次 warp 归约得到最终总和
-            if (lane == 0) score = val;
+        if (tid == 0) {
+            score = smem[0];
         }
         __syncthreads();
-        if (tid == 0) smem[0] = score; // 复用 smem[0] 广播
-        __syncthreads();
-        score = smem[0];
 
         float s_val = score * scale;
 
@@ -309,6 +217,98 @@ __global__ void flash_attn_kernel(
         O[(((b * target_seq_len + t) * query_heads + qh) * head_dim) + tid] = from_float<T>(o / l);
     }
 }
+//__global__ void flash_attn_kernel(
+//        const T* __restrict__ Q,
+//        const T* __restrict__ K,
+//        const T* __restrict__ V,
+//        T* __restrict__ O,
+//        int batch_size,
+//        int target_seq_len,
+//        int src_seq_len,
+//        int query_heads,
+//        int kv_heads,
+//        int head_dim,
+//        bool is_causal
+//) {
+//    int idx = blockIdx.x;
+//    int tid = threadIdx.x;
+//    int total = batch_size * target_seq_len * query_heads;
+//    if (idx >= total) return;
+//
+//    extern __shared__ float smem[];
+//
+//    int qh = idx % query_heads;
+//    int t  = (idx / query_heads) % target_seq_len;
+//    int b  = idx / (query_heads * target_seq_len);
+//
+//    int kv_h = qh * kv_heads / query_heads;
+//
+//    float q = 0.0f;
+//    if (tid < head_dim) {
+//        const T* q_ptr = Q + (((b * target_seq_len + t) * query_heads + qh) * head_dim);
+//        q = to_float(q_ptr[tid]);
+//    }
+//
+//    float m = -INFINITY; // 老的最大值
+//    float l = 0.0f; // 归一化分母
+//    float o = 0.0f; // 未归一化输出
+//    const float scale = rsqrtf((float)head_dim);
+//
+//    for (int s = 0; s < src_seq_len; ++s) {
+//        if (is_causal && s > t) break; // 因果注意力
+//
+//        const T* k_ptr = K + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
+//        const T* v_ptr = V + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
+//
+//        float k = 0.0f;
+//        if (tid < head_dim) {
+//            k = to_float(k_ptr[tid]);
+//        }
+//        float val = q * k;
+//        // Warp 内归约: 得到每个 warp 的和
+//        val = warpReduceSum(val);
+//
+//        int lane = tid % 32;
+//        int warp_id = tid / 32;
+//
+//        if (lane == 0) smem[warp_id] = val;
+//        __syncthreads(); // 等待所有 warp 写完
+//
+//        // 让第一个 warp (warp 0) 将所有 warp 的结果加起来
+//        float score = 0.0f;
+//        if (warp_id == 0) {
+//            // 假设 blockDim 不超过 1024 (即 warp 数量 <= 32)
+//            // 只有 warp 0 的前 (blockDim/32) 个线程需要读取 smem
+//            val = (tid < (blockDim.x / 32)) ? smem[lane] : 0.0f;
+//            val = warpReduceSum(val); // 再次 warp 归约得到最终总和
+//            if (lane == 0) score = val;
+//        }
+//        __syncthreads();
+//        if (tid == 0) smem[0] = score; // 复用 smem[0] 广播
+//        __syncthreads();
+//        score = smem[0];
+//
+//        float s_val = score * scale;
+//
+//        float m_new = fmaxf(m, s_val); // 新的最大值，每个tid上都是一样的
+//        float alpha = expf(m - m_new); // 老的对新的折算比率
+//        float beta  = expf(s_val - m_new);
+//
+//        float v = 0.0f;
+//        if (tid < head_dim) {
+//            v = to_float(v_ptr[tid]);
+//        }
+//        o = o * alpha + beta * v; // 一个个v值计算的，而不是整个向量
+//        l = l * alpha + beta;
+//        m = m_new;
+//
+//        __syncthreads(); // 当前这个online计算完成
+//    }
+//
+//    if(tid < head_dim) {
+//        O[(((b * target_seq_len + t) * query_heads + qh) * head_dim) + tid] = from_float<T>(o / l);
+//    }
+//}
 // 扩展到大于等于n的最小2的幂（n > 0）
 unsigned int nextPowerOfTwo(unsigned int n) {
     n--;
@@ -349,7 +349,7 @@ void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
     dim3 block_dim(block_size);
     dim3 grid_dim(grid_size);
     size_t smen_size = block_dim.x * sizeof(float );
-    smen_size = smen_size / 32;
+//    smen_size = smen_size / 32;
 
     flash_attn_kernel<<<grid_dim, block_dim, smen_size>>>(
             d_q, d_k, d_v, d_o,
