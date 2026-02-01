@@ -182,7 +182,7 @@ __global__ void flash_attn_kernel(
 
         float m_new = fmaxf(m, s_val); // 新的最大值，每个tid上都是一样的
         float alpha = expf(m - m_new); // 老的对新的折算比率
-        float beta  = expf(score - m_new);
+        float beta  = expf(s_val - m_new);
 
         o = o * alpha + beta * to_float(v_ptr[tid]); // 一个个v值计算的，而不是整个向量
         l = l * alpha + beta;
