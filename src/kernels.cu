@@ -177,7 +177,11 @@ __global__ void flash_attn_kernel(
         if (tid < head_dim) {
             k = to_float(k_ptr[tid]);
         }
-        smem[tid] = q * k;
+        if (tid < head_dim) {
+            smem[tid] = q * k;
+        } else {
+            smem[tid] = 0;
+        }
 
         __syncthreads();
         for (int i = blockDim.x / 2; i > 0; i >>= 1) {
