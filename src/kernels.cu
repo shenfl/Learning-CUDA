@@ -343,7 +343,8 @@ void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
     RUNTIME_CHECK(cudaMemcpy(d_v, h_v.data(), v_size, cudaMemcpyHostToDevice));
 
     int blocks = batch_size * target_seq_len * query_heads;
-//    int threads = nextPowerOfTwo(head_dim);
+    int thread = head_dim;
+//    threads = nextPowerOfTwo(head_dim);
     size_t smen_size = threads * sizeof(float );
     smen_size = smen_size / 32;
 
