@@ -136,6 +136,10 @@ __global__ void flash_attn_kernel(
     int total = batch_size * target_seq_len * query_heads;
     if (idx >= total || tid >= head_dim) return;
 
+    unsigned mask = (head_dim >= warpSize)
+                    ? 0xffffffff
+                    : ((1u << head_dim) - 1);
+
     int qh = idx % query_heads;
     int t  = (idx / query_heads) % target_seq_len;
     int b  = idx / (query_heads * target_seq_len);
@@ -143,11 +147,12 @@ __global__ void flash_attn_kernel(
     int kv_h = qh * kv_heads / query_heads;
 
     const T* q_ptr = Q + (((b * target_seq_len + t) * query_heads + qh) * head_dim);
-    T q = to_float(q_ptr[tid]);
+    float q = to_float(q_ptr[tid]);
 
     float m = -1e20f; // 老的最大值
     float l = 0.0f; // 归一化分母
     float o = 0.0f; // 未归一化输出
+    const float scale = rsqrtf((float)head_dim);
 
     for (int s = 0; s < src_seq_len; ++s) {
         if (is_causal && s > t) break; // 因果注意力
@@ -155,20 +160,17 @@ __global__ void flash_attn_kernel(
         const T* k_ptr = K + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
         const T* v_ptr = V + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
 
-        __shared__ float score; // head_dim计算处理的attention分数
-        if (tid == 0) score = 0.0f;
-        __syncthreads(); // 每个线程先取值
+        float local = q * to_float(k_ptr[tid]);
 
-        float k = to_float(k_ptr[tid]);
-        float attn = q * k;
-        for (int offset = warpSize/2; offset > 0; offset >>= 1) {
-            attn += __shfl_down_sync(0xffffffff, attn, offset);
+        // warp reduce
+        for (int offset = warpSize / 2; offset > 0; offset >>= 1) {
+            local += __shfl_down_sync(mask, local, offset);
         }
-        __syncthreads(); // 当前这个src分数计算完了
 
-        float s_val = score / sqrtf((float)head_dim);
+        // broadcast score
+        float score = __shfl_sync(mask, local, 0) * scale;
 
-        float m_new = fmaxf(m, s_val); // 新的最大值，每个tid上都是一样的
+        float m_new = fmaxf(m, score); // 新的最大值，每个tid上都是一样的
         float alpha = expf(m - m_new); // 老的对新的折算比率
         float beta  = expf(s_val - m_new);
 
