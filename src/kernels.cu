@@ -101,14 +101,6 @@ __device__ __forceinline__ half from_float<half>(float x) {
     return __float2half_rn(x);
 }
 
-template <typename T>
-__device__ T mul(const T &a, const T &b) {
-    if constexpr (std::is_same_v<T, float>) {
-        return a * b;
-    } else if constexpr (std::is_same_v<T, __half>) {
-        return __hmul(a, b);
-    }
-}
 /**
  * @brief Computes flash attention for given query, key, and value tensors.
  * 
@@ -151,7 +143,7 @@ __global__ void flash_attn_kernel(
     int kv_h = qh * kv_heads / query_heads;
 
     const T* q_ptr = Q + (((b * target_seq_len + t) * query_heads + qh) * head_dim);
-    T q = q_ptr[tid];
+    T q = to_float(q_ptr[tid]);
 
     float m = -1e20f; // 老的最大值
     float l = 0.0f; // 归一化分母
@@ -167,7 +159,11 @@ __global__ void flash_attn_kernel(
         if (tid == 0) score = 0.0f;
         __syncthreads(); // 每个线程先取值
 
-        atomicAdd(&score, to_float(mul(q, k_ptr[tid])));
+        float k = to_float(k_ptr[tid]);
+        float attn = q * k;
+        for (int offset = warpSize/2; offset > 0; offset >>= 1) {
+            attn += __shfl_down_sync(0xffffffff, attn, offset);
+        }
         __syncthreads(); // 当前这个src分数计算完了
 
         float s_val = score / sqrtf((float)head_dim);
