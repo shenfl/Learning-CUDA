@@ -136,9 +136,7 @@ __global__ void flash_attn_kernel(
     int total = batch_size * target_seq_len * query_heads;
     if (idx >= total || tid >= head_dim) return;
 
-    unsigned mask = (head_dim >= warpSize)
-                    ? 0xffffffff
-                    : ((1u << head_dim) - 1);
+    extern __shared__ T smem[];
 
     int qh = idx % query_heads;
     int t  = (idx / query_heads) % target_seq_len;
@@ -160,17 +158,29 @@ __global__ void flash_attn_kernel(
         const T* k_ptr = K + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
         const T* v_ptr = V + (((b * src_seq_len + s) * kv_heads + kv_h) * head_dim);
 
-        float local = q * to_float(k_ptr[tid]);
+        __shared__ float score; // head_dim计算处理的attention分数
+        if (tid == 0) score = 0.0f;
+        __syncthreads(); // 每个线程先取值
 
-        // warp reduce
-        for (int offset = warpSize / 2; offset > 0; offset >>= 1) {
-            local += __shfl_down_sync(mask, local, offset);
+        float k = to_float(k_ptr[tid]);
+        smem[tid] = q * k;
+
+        __syncthreads();
+        for (int i = blockDim.x / 2; i > 0; i >>= 1) {
+            if (tid < i) {
+                smem[tid] += smem[tid + i];
+            }
+            __syncthreads();
         }
 
-        // broadcast score
-        float score = __shfl_sync(mask, local, 0) * scale;
+        if (tid == 0) {
+            atomicAdd(score, smem[0]);
+        }
+        __syncthreads();
 
-        float m_new = fmaxf(m, score); // 新的最大值，每个tid上都是一样的
+        float s_val = score / scale;
+
+        float m_new = fmaxf(m, s_val); // 新的最大值，每个tid上都是一样的
         float alpha = expf(m - m_new); // 老的对新的折算比率
         float beta  = expf(score - m_new);
 
@@ -208,8 +218,9 @@ void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
 
     int blocks = batch_size * target_seq_len * query_heads;
     int threads = head_dim;
+    size_t smen_size = block_dim.x * sizeof(T);
 
-    flash_attn_kernel<<<blocks, threads>>>(
+    flash_attn_kernel<<<blocks, threads, smen_size>>>(
             d_q, d_k, d_v, d_o,
             batch_size, target_seq_len, src_seq_len,
             query_heads, kv_heads, head_dim,
