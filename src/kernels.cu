@@ -205,9 +205,9 @@ __global__ void flash_attn_kernel(
         float v = 0.0f;
         if (tid < head_dim) {
             v = to_float(v_ptr[tid]);
+            o = o * alpha + beta * v; // 一个个v值计算的，而不是整个向量
+            l = l * alpha + beta;
         }
-        o = o * alpha + beta * v; // 一个个v值计算的，而不是整个向量
-        l = l * alpha + beta;
         m = m_new;
 
         __syncthreads(); // 当前这个online计算完成
