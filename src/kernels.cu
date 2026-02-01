@@ -205,6 +205,17 @@ __global__ void flash_attn_kernel(
         O[(((b * target_seq_len + t) * query_heads + qh) * head_dim) + tid] = from_float<T>(o / l);
     }
 }
+// 扩展到大于等于n的最小2的幂（n > 0）
+unsigned int nextPowerOfTwo(unsigned int n) {
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    n++;
+    return n;
+}
 
 template <typename T>
 void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
@@ -229,7 +240,7 @@ void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
     RUNTIME_CHECK(cudaMemcpy(d_v, h_v.data(), v_size, cudaMemcpyHostToDevice));
 
     int blocks = batch_size * target_seq_len * query_heads;
-    int threads = head_dim;
+    int threads = nextPowerOfTwo(head_dim);
     size_t smen_size = threads * sizeof(float );
 
     flash_attn_kernel<<<blocks, threads, smen_size>>>(
