@@ -150,7 +150,7 @@ __global__ void flash_attn_kernel(
         q = to_float(q_ptr[tid]);
     }
 
-    float m = -1e20f; // 老的最大值
+    float m = -INFINITY; // 老的最大值
     float l = 0.0f; // 归一化分母
     float o = 0.0f; // 未归一化输出
     const float scale = rsqrtf((float)head_dim);
