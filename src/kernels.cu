@@ -343,13 +343,15 @@ void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
     RUNTIME_CHECK(cudaMemcpy(d_k, h_k.data(), k_size, cudaMemcpyHostToDevice));
     RUNTIME_CHECK(cudaMemcpy(d_v, h_v.data(), v_size, cudaMemcpyHostToDevice));
 
-    int blocks = batch_size * target_seq_len * query_heads;
-    int threads = head_dim;
-//    threads = nextPowerOfTwo(head_dim);
-    size_t smen_size = threads * sizeof(float );
+    int grid_size = batch_size * target_seq_len * query_heads;
+    int block_size = head_dim;
+//    block_size = nextPowerOfTwo(block_size);
+    dim3 block_dim(block_size);
+    dim3 grid_dim(grid_size);
+    size_t smen_size = block_dim.x * sizeof(float );
     smen_size = smen_size / 32;
 
-    flash_attn_kernel<<<blocks, threads, smen_size>>>(
+    flash_attn_kernel<<<grid_dim, block_dim, smen_size>>>(
             d_q, d_k, d_v, d_o,
             batch_size, target_seq_len, src_seq_len,
             query_heads, kv_heads, head_dim,
