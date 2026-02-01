@@ -134,7 +134,7 @@ __global__ void flash_attn_kernel(
     int idx = blockIdx.x;
     int tid = threadIdx.x;
     int total = batch_size * target_seq_len * query_heads;
-    if (idx >= total || tid >= head_dim) return;
+    if (idx >= total) return;
 
     extern __shared__ float smem[];
 
@@ -144,8 +144,11 @@ __global__ void flash_attn_kernel(
 
     int kv_h = qh * kv_heads / query_heads;
 
-    const T* q_ptr = Q + (((b * target_seq_len + t) * query_heads + qh) * head_dim);
-    float q = to_float(q_ptr[tid]);
+    float q = 0.0f;
+    if (tid < head_dim) {
+        const T* q_ptr = Q + (((b * target_seq_len + t) * query_heads + qh) * head_dim);
+        q = to_float(q_ptr[tid]);
+    }
 
     float m = -1e20f; // 老的最大值
     float l = 0.0f; // 归一化分母
@@ -162,7 +165,10 @@ __global__ void flash_attn_kernel(
         if (tid == 0) score = 0.0f;
         __syncthreads(); // 每个线程先取值
 
-        float k = to_float(k_ptr[tid]);
+        float k = 0.0f;
+        if (tid < head_dim) {
+            k = to_float(k_ptr[tid]);
+        }
         smem[tid] = q * k;
 
         __syncthreads();
@@ -191,7 +197,9 @@ __global__ void flash_attn_kernel(
         __syncthreads(); // 当前这个online计算完成
     }
 
-    O[(((b * target_seq_len + t) * query_heads + qh) * head_dim) + tid] = from_float<T>(o / l);
+    if(tid < head_dim) {
+        O[(((b * target_seq_len + t) * query_heads + qh) * head_dim) + tid] = from_float<T>(o / l);
+    }
 }
 
 template <typename T>
