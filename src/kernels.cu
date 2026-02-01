@@ -345,7 +345,7 @@ void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
 
     int grid_size = batch_size * target_seq_len * query_heads;
     int block_size = head_dim;
-//    block_size = nextPowerOfTwo(block_size);
+    block_size = nextPowerOfTwo(block_size);
     dim3 block_dim(block_size);
     dim3 grid_dim(grid_size);
     size_t smen_size = block_dim.x * sizeof(float );
