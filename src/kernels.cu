@@ -218,7 +218,7 @@ void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
 
     int blocks = batch_size * target_seq_len * query_heads;
     int threads = head_dim;
-    size_t smen_size = block_dim.x * sizeof(T);
+    size_t smen_size = threads * sizeof(T);
 
     flash_attn_kernel<<<blocks, threads, smen_size>>>(
             d_q, d_k, d_v, d_o,
