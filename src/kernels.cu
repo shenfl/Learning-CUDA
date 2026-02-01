@@ -190,7 +190,11 @@ __global__ void flash_attn_kernel(
         float alpha = expf(m - m_new); // 老的对新的折算比率
         float beta  = expf(s_val - m_new);
 
-        o = o * alpha + beta * to_float(v_ptr[tid]); // 一个个v值计算的，而不是整个向量
+        float v = 0.0f;
+        if (tid < head_dim) {
+            v = to_float(v_ptr[tid]);
+        }
+        o = o * alpha + beta * v; // 一个个v值计算的，而不是整个向量
         l = l * alpha + beta;
         m = m_new;
 
