@@ -92,8 +92,8 @@ __device__ __forceinline__ float to_float<half>(half x) {
 }
 
 template <typename T>
-__device__ __forceinline__ T from_float(float x) {
-    return (T)x;
+__device__ __forceinline__ float from_float<float>(float x) {
+    return x;
 }
 
 template <>
