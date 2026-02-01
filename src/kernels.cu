@@ -174,11 +174,11 @@ __global__ void flash_attn_kernel(
         }
 
         if (tid == 0) {
-            atomicAdd(score, smem[0]);
+            score = smem[0]
         }
         __syncthreads();
 
-        float s_val = score / scale;
+        float s_val = score * scale;
 
         float m_new = fmaxf(m, s_val); // 新的最大值，每个tid上都是一样的
         float alpha = expf(m - m_new); // 老的对新的折算比率
