@@ -161,7 +161,7 @@ __global__ void flash_attn_kernel(
     float m = -INFINITY; // 老的最大值
     float l = 0.0f; // 归一化分母
     float o = 0.0f; // 未归一化输出
-    const float scale = rsqrtf((float)head_dim);
+    const float scale = sqrtf((float)head_dim);
 
     for (int s = 0; s < src_seq_len; ++s) {
         if (is_causal && s > t) break; // 因果注意力
@@ -196,7 +196,7 @@ __global__ void flash_attn_kernel(
         }
         __syncthreads();
 
-        float s_val = score * scale;
+        float s_val = score / scale;
 
         float m_new = fmaxf(m, s_val); // 新的最大值，每个tid上都是一样的
         float alpha = expf(m - m_new); // 老的对新的折算比率
@@ -327,7 +327,6 @@ void flashAttention(const std::vector<T>& h_q, const std::vector<T>& h_k,
                     int batch_size, int target_seq_len, int src_seq_len, 
                     int query_heads, int kv_heads, int head_dim, bool is_causal) {       
     // TODO: Implement the flash attention function
-    const T scale = static_cast<T>(1.0 / std::sqrt(head_dim));
     size_t q_size = h_q.size() * sizeof(T);
     size_t k_size = h_k.size() * sizeof(T);
     size_t v_size = h_v.size() * sizeof(T);
